@@ -39,7 +39,8 @@ must be disabled/removed before using Win+Alt+R.
 sh macos/build.sh
 ```
 
-Requires macOS13+ and Xcode Command Line Tools. The build creates an app and DMG.
+Requires macOS13+ and Xcode Command Line Tools. The build creates a Universal
+Intel/Apple Silicon app and a drag-to-Applications DMG.
 Ad-hoc signed only, not Developer-ID signed/notarized. Local Mac screen-capture,
 timing, wake/sleep and repeated-exit tests are still required. Compilation is not
 equivalent to runtime verification. The macOS backend is not a finished release.
