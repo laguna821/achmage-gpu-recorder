@@ -1,0 +1,37 @@
+name: Build platform packages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Acquire Microsoft SDK
+        shell: pwsh
+        run: ./windows/setup-sdk.ps1
+      - name: Build native application
+        shell: pwsh
+        run: ./windows/build.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-experimental
+          path: |
+            build/windows/AchmageRecorder.exe
+            windows/Install.cmd
+            windows/Uninstall.cmd
+            LICENSE
+            README.md
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile experimental macOS backend
+        run: sh macos/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-experimental
+          path: dist/*.dmg

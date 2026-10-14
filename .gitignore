@@ -1,0 +1,8 @@
+.build-deps/
+build/
+dist/
+upstream/
+*.partial.mp4
+*.log
+validation/private/
+**/.DS_Store
