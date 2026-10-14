@@ -9,4 +9,9 @@ xcrun swiftc -swift-version 5 -parse-as-library -O -target "$(uname -m)-apple-ma
 cp macos/Info.plist "$OUT/Contents/Info.plist"
 codesign --force --sign - "$OUT"
 mkdir -p dist
-hdiutil create -volname "Achmage Recorder (experimental)" -srcfolder "$OUT" -ov -format UDZO dist/AchmageRecorder-macos-experimental.dmg
+STAGE="build/macos/dmg-root"
+mkdir -p "$STAGE"
+cp -R "$OUT" "$STAGE/"
+cp LICENSE README.md "$STAGE/"
+if [ ! -e "$STAGE/Applications" ] && [ ! -L "$STAGE/Applications" ]; then ln -s /Applications "$STAGE/Applications"; fi
+hdiutil create -volname "Achmage Recorder (experimental)" -srcfolder "$STAGE" -ov -format UDZO dist/AchmageRecorder-macos-experimental.dmg
