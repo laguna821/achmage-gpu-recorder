@@ -29,9 +29,10 @@ Install.cmd installs the executable for the current user and a Startup shortcut.
 Uninstall.cmd stops the receiver normally and removes only its executable/shortcut.
 Recordings remain. No administrator rights required for this application.
 
-The executable is not signed. No production release is claimed until recorded
-runtime verification is published in VALIDATION.md. Conflicting Game Bar hotkeys
-must be disabled/removed before using Win+Alt+R.
+The executable is not signed. This is an alpha release; runtime verification and
+remaining native checks are in VALIDATION.md. If Windows retains a reserved
+Game Bar hotkey, the broker handles only Win+LeftAlt+R through a local hook;
+other keys pass through and no keyboard data is stored.
 
 ## macOS (experimental)
 
