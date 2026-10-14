@@ -105,9 +105,20 @@ void toggle(){
  POINT pos{};GetCursorPos(&pos);HMONITOR monitor=MonitorFromPoint(pos,MONITOR_DEFAULTTOPRIMARY);
  currentFile=newOutput().wstring();ResetEvent(stopEvent);
  std::error_code readyError;fs::remove(dataDir()/L"worker-ready",readyError);
- std::wstring cmd=quote(exePath())+L" --worker --monitor "+std::to_wstring((uintptr_t)monitor)+L" --output "+quote(currentFile);
- STARTUPINFOW si{sizeof(si)};PROCESS_INFORMATION pi{};
- if(!CreateProcessW(nullptr,cmd.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&si,&pi)){
+ HANDLE parentWatch=nullptr;
+ check_hresult(DuplicateHandle(GetCurrentProcess(),GetCurrentProcess(),GetCurrentProcess(),&parentWatch,SYNCHRONIZE,TRUE,0)?S_OK:HRESULT_FROM_WIN32(GetLastError()));
+ std::wstring cmd=quote(exePath())+L" --worker --monitor "+std::to_wstring((uintptr_t)monitor)+L" --parent-handle "+
+  std::to_wstring((uintptr_t)parentWatch)+L" --output "+quote(currentFile);
+ STARTUPINFOEXW si{};si.StartupInfo.cb=sizeof(si);PROCESS_INFORMATION pi{};
+ SIZE_T bytes=0;InitializeProcThreadAttributeList(nullptr,1,0,&bytes);
+ std::vector<BYTE> attributes(bytes);si.lpAttributeList=reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
+ if(!InitializeProcThreadAttributeList(si.lpAttributeList,1,0,&bytes)){CloseHandle(parentWatch);check_hresult(HRESULT_FROM_WIN32(GetLastError()));}
+ if(!UpdateProcThreadAttribute(si.lpAttributeList,0,PROC_THREAD_ATTRIBUTE_HANDLE_LIST,&parentWatch,sizeof(parentWatch),nullptr,nullptr)){
+  DWORD error=GetLastError();DeleteProcThreadAttributeList(si.lpAttributeList);CloseHandle(parentWatch);check_hresult(HRESULT_FROM_WIN32(error));
+ }
+ BOOL created=CreateProcessW(nullptr,cmd.data(),nullptr,nullptr,TRUE,CREATE_NO_WINDOW|EXTENDED_STARTUPINFO_PRESENT,nullptr,nullptr,&si.StartupInfo,&pi);
+ DeleteProcThreadAttributeList(si.lpAttributeList);CloseHandle(parentWatch);
+ if(!created){
   state("error",L"녹화 프로세스 시작 실패");notify(L"녹화 시작 실패",L"프로세스를 시작하지 못했습니다.");return;
  }
  CloseHandle(pi.hThread);child=pi.hProcess;state("starting");badgeShow(true);
@@ -186,8 +197,8 @@ struct Encoder {
  }
  void finish(){if(frame==0)throw std::runtime_error("No captured frames");check_hresult(writer->Finalize());writer=nullptr;}
 };
-int worker(HMONITOR monitor,fs::path output,int seconds){
- HANDLE stop=OpenEventW(SYNCHRONIZE,FALSE,STOPNAME);if(!stop)return 2;
+int worker(HMONITOR monitor,fs::path output,int seconds,HANDLE parentWatch){
+ HANDLE stop=OpenEventW(SYNCHRONIZE,FALSE,STOPNAME);if(!stop||!parentWatch){if(stop)CloseHandle(stop);if(parentWatch)CloseHandle(parentWatch);return 2;}
  fs::path partial=output.wstring()+L".partial.mp4";ULONGLONG frames=0,dropped=0;std::wstring name,error;bool ok=false;
  try{
   if(!freeSpace(output.parent_path()))throw std::runtime_error("Less than 2GiB free");
@@ -218,7 +229,7 @@ int worker(HMONITOR monitor,fs::path output,int seconds){
   com_ptr<ID3D11Texture2D> cached;
   auto start=std::chrono::steady_clock::now(), next=start;
   try{
-   while(WaitForSingleObject(stop,0)==WAIT_TIMEOUT&&!gone){
+   while(WaitForSingleObject(stop,0)==WAIT_TIMEOUT&&WaitForSingleObject(parentWatch,0)==WAIT_TIMEOUT&&!gone){
     if(seconds>0&&std::chrono::steady_clock::now()-start>=std::chrono::seconds(seconds))break;
     if(encoder.frame%30==0&&!freeSpace(output.parent_path()))break;
     Direct3D11CaptureFrame f{nullptr};
@@ -240,7 +251,7 @@ int worker(HMONITOR monitor,fs::path output,int seconds){
   ok=true;
  }catch(hresult_error const&e){std::wstringstream s;s<<e.message().c_str()<<L" (0x"<<std::hex<<unsigned(e.code())<<L") "<<to_hstring(failedCall).c_str();error=s.str();}
  catch(std::exception const&e){error=to_hstring(e.what()).c_str();}
- CloseHandle(stop);MFShutdown();
+ CloseHandle(stop);CloseHandle(parentWatch);MFShutdown();
  atomicText(dataDir()/L"last-recording.json","{\"success\":"+std::string(ok?"true":"false")+",\"frames\":"+std::to_string(frames)+
  ",\"droppedCaptureFrames\":"+std::to_string(dropped)+",\"hardwareEncoder\":\""+escape(name)+"\",\"file\":\""+escape(ok?output.wstring():partial.wstring())+"\",\"error\":\""+escape(error)+"\"}\n");
  return ok?0:1;
@@ -355,9 +366,9 @@ int wmain(int argc,wchar_t**argv){
   if(command==L"verify"&&argc==3)return verify(argv[2]);
   if(command==L"--broker")return runBroker();
   if(command==L"--worker"){
-   HMONITOR mon=nullptr;fs::path out;int seconds=0;
-   for(int i=2;i+1<argc;++i){std::wstring a=argv[i];if(a==L"--monitor")mon=(HMONITOR)_wcstoui64(argv[++i],nullptr,10);else if(a==L"--output")out=argv[++i];else if(a==L"--seconds")seconds=_wtoi(argv[++i]);}
-   if(!mon||out.empty())return 2;return worker(mon,out,seconds);
+   HMONITOR mon=nullptr;fs::path out;int seconds=0;HANDLE parentWatch=nullptr;
+   for(int i=2;i+1<argc;++i){std::wstring a=argv[i];if(a==L"--monitor")mon=(HMONITOR)_wcstoui64(argv[++i],nullptr,10);else if(a==L"--parent-handle")parentWatch=(HANDLE)_wcstoui64(argv[++i],nullptr,10);else if(a==L"--output")out=argv[++i];else if(a==L"--seconds")seconds=_wtoi(argv[++i]);}
+   if(!mon||out.empty())return 2;return worker(mon,out,seconds,parentWatch);
   }
   if(command==L"status"){std::string s=readText(dataDir()/L"status.json");if(s.empty())s="{\"status\":\"offline\"}";std::fputs(s.c_str(),stdout);return findBroker()?0:3;}
   if(command==L"inspect"){

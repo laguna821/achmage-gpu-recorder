@@ -89,10 +89,16 @@ final class CaptureWorker: NSObject, SCStreamOutput, SCStreamDelegate {
         } // backpressure drops frames rather than growing an application queue
     }
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        errorText = error.localizedDescription; Task { await stop() }
+        queue.async { self.errorText = error.localizedDescription; Task { await self.stop() } }
     }
     func stop() async {
-        guard !stopped else { return }; stopped = true; timer?.cancel(); timer = nil
+        let shouldStop = await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
+            queue.async {
+                if self.stopped { c.resume(returning: false) }
+                else { self.stopped = true; c.resume(returning: true) }
+            }
+        }
+        guard shouldStop else { return }; timer?.cancel(); timer = nil
         try? await stream?.stopCapture(); stream = nil
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in queue.async {
             // Keep a single final frame so a static desktop still has the full
