@@ -12,7 +12,8 @@ $lib="$SdkLibRoot\c"
 $out=Join-Path $root 'build\windows'
 New-Item -ItemType Directory -Path $out -Force | Out-Null
 $cl=Join-Path $msvc.FullName 'bin\Hostx64\x64\cl.exe'
-$argsList=@('/nologo','/std:c++20','/EHsc','/O2','/MT','/utf-8','/DUNICODE','/D_UNICODE','/DNOMINMAX',"/I$($msvc.FullName)\include")
+$standard=if([version]$msvc.Name -lt [version]'14.30'){'/std:c++17'}else{'/std:c++20'}
+$argsList=@('/nologo',$standard,'/EHsc','/O2','/MT','/utf-8','/DUNICODE','/D_UNICODE','/DNOMINMAX',"/I$($msvc.FullName)\include")
 foreach($d in @('um','shared','ucrt','winrt','cppwinrt')){$argsList+="/I$inc\$d"}
 $argsList+=@("$PSScriptRoot\recorder.cpp","/Fo$out\recorder.obj","/Fe$out\AchmageRecorder.exe",'/link',"/LIBPATH:$($msvc.FullName)\lib\x64","/LIBPATH:$lib\um\x64","/LIBPATH:$lib\ucrt\x64",
 'user32.lib','shell32.lib','ole32.lib','oleaut32.lib','runtimeobject.lib','d3d11.lib','dxgi.lib','mfplat.lib','mfreadwrite.lib','mfuuid.lib','mf.lib','wtsapi32.lib','shlwapi.lib','advapi32.lib','/SUBSYSTEM:WINDOWS','/ENTRY:wmainCRTStartup')
