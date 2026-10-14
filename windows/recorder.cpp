@@ -47,6 +47,9 @@ HANDLE stopEvent=nullptr, child=nullptr;
 HWND broker=nullptr, badge=nullptr;
 std::wstring currentFile;
 bool exitWhenDone=false;
+HHOOK keyboardHook=nullptr;
+bool rHeld=false;
+std::string hotkeyMode="unregistered";
 NOTIFYICONDATAW tray{};
 fs::path dataDir(){
  PWSTR s=nullptr; check_hresult(SHGetKnownFolderPath(FOLDERID_LocalAppData,0,nullptr,&s));
@@ -69,7 +72,7 @@ void atomicText(fs::path const&p,std::string const&s){
 std::string readText(fs::path const&p){std::ifstream f(p,std::ios::binary);return {std::istreambuf_iterator<char>(f),{}};}
 void state(std::string const&status,std::wstring const&err=L""){
  atomicText(dataDir()/L"status.json","{\"status\":\""+status+"\",\"brokerPid\":"+std::to_string(GetCurrentProcessId())+
- ",\"workerPid\":"+std::to_string(child?GetProcessId(child):0)+",\"file\":\""+escape(currentFile)+"\",\"error\":\""+escape(err)+"\"}\n");
+ ",\"workerPid\":"+std::to_string(child?GetProcessId(child):0)+",\"hotkeyMode\":\""+hotkeyMode+"\",\"file\":\""+escape(currentFile)+"\",\"error\":\""+escape(err)+"\"}\n");
 }
 void notify(wchar_t const*title,std::wstring const&text){
  tray.uFlags=NIF_INFO;wcscpy_s(tray.szInfoTitle,title);wcsncpy_s(tray.szInfo,text.c_str(),_TRUNCATE);tray.dwInfoFlags=NIIF_INFO;
@@ -267,6 +270,22 @@ LRESULT CALLBACK proc(HWND h,UINT msg,WPARAM w,LPARAM l){
  catch(hresult_error const&e){try{state("error",e.message().c_str());}catch(...){}}
  return DefWindowProcW(h,msg,w,l);
 }
+LRESULT CALLBACK hotkeyHook(int code,WPARAM w,LPARAM l){
+ if(code==HC_ACTION){
+  auto key=reinterpret_cast<KBDLLHOOKSTRUCT*>(l);
+  if(key->vkCode=='R'){
+   bool down=w==WM_KEYDOWN||w==WM_SYSKEYDOWN;
+   bool up=w==WM_KEYUP||w==WM_SYSKEYUP;
+   if(up&&rHeld){rHeld=false;return 1;}
+   if(down&&rHeld)return 1;
+   bool win=(GetAsyncKeyState(VK_LWIN)|GetAsyncKeyState(VK_RWIN))&0x8000;
+   if(down&&win&&(GetAsyncKeyState(VK_LMENU)&0x8000)&&!(GetAsyncKeyState(VK_CONTROL)&0x8000)&&!(GetAsyncKeyState(VK_SHIFT)&0x8000)){
+    rHeld=true;PostMessageW(broker,TOGGLE,0,0);return 1;
+   }
+  }
+ }
+ return CallNextHookEx(keyboardHook,code,w,l);
+}
 int runBroker(){
  HANDLE mutex=CreateMutexW(nullptr,TRUE,L"Local\\AchmageRecorderBrokerMutex01");
  if(GetLastError()==ERROR_ALREADY_EXISTS){CloseHandle(mutex);return 0;}
@@ -276,11 +295,17 @@ int runBroker(){
  broker=CreateWindowExW(WS_EX_TOOLWINDOW,CLASSNAME,L"Achmage Recorder",WS_POPUP,0,0,0,0,nullptr,nullptr,wc.hInstance,nullptr);
  tray.cbSize=sizeof(tray);tray.hWnd=broker;tray.uID=1;tray.uFlags=NIF_ICON|NIF_MESSAGE|NIF_TIP;tray.uCallbackMessage=WM_APP+10;
  tray.hIcon=LoadIconW(nullptr,IDI_APPLICATION);wcscpy_s(tray.szTip,L"Achmage Recorder · Win+왼쪽 Alt+R");Shell_NotifyIconW(NIM_ADD,&tray);
- if(!RegisterHotKey(broker,1,MOD_WIN|MOD_ALT|MOD_NOREPEAT,'R')){state("error",L"Win+Alt+R을 다른 앱이 사용 중입니다.");notify(L"단축키 충돌",L"Game Bar 단축키를 해제한 뒤 수신기를 다시 시작해 주세요.");}
- else state("idle");
+ if(RegisterHotKey(broker,1,MOD_WIN|MOD_ALT|MOD_NOREPEAT,'R')){hotkeyMode="registered";state("idle");}
+ else{
+  // Windows can retain reserved Game Bar hotkeys after package removal.
+  // This fallback recognizes only Win+LEFT Alt+R. No key data is retained.
+  keyboardHook=SetWindowsHookExW(WH_KEYBOARD_LL,hotkeyHook,GetModuleHandleW(nullptr),0);
+  if(keyboardHook){hotkeyMode="specific-chord-hook";state("idle");}
+  else{state("error",L"녹화 단축키를 연결하지 못했습니다.");notify(L"단축키 등록 실패",L"toggle 명령으로 녹화할 수 있습니다.");}
+ }
  WTSRegisterSessionNotification(broker,NOTIFY_FOR_THIS_SESSION);SetTimer(broker,1,250,nullptr);
  MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0){TranslateMessage(&msg);DispatchMessageW(&msg);}
- UnregisterHotKey(broker,1);WTSUnRegisterSessionNotification(broker);Shell_NotifyIconW(NIM_DELETE,&tray);
+ UnregisterHotKey(broker,1);if(keyboardHook)UnhookWindowsHookEx(keyboardHook);WTSUnRegisterSessionNotification(broker);Shell_NotifyIconW(NIM_DELETE,&tray);
  if(badge)DestroyWindow(badge);DestroyWindow(broker);CloseHandle(stopEvent);ReleaseMutex(mutex);CloseHandle(mutex);state("offline");return 0;
 }
 HWND findBroker(){return FindWindowW(CLASSNAME,L"Achmage Recorder");}
